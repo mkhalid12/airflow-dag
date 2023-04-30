@@ -1,41 +1,52 @@
-from datetime import timedelta, datetime
-
-# The DAG object
 from airflow import DAG
+from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.operators.bash import BashOperator
 
-# Operators
-from airflow.operators.dummy_operator import DummyOperator
-from airflow.operators.python_operator import PythonOperator
+from datetime import datetime
+from random import randint
 
-# initializing the default arguments
-default_args = {
-		'owner': 'madiha',
-		'start_date': datetime(2022, 3, 4),
-		'retries': 3,
-		'retry_delay': timedelta(minutes=5)
-}
+def _choosing_best_model(ti):
+    accuracies = ti.xcom_pull(task_ids=[
+        'training_model_A',
+        'training_model_B',
+        'training_model_C'
+    ])
+    if max(accuracies) > 8:
+        return 'accurate'
+    return 'inaccurate'
 
-# Instantiate a DAG object
-hello_world_dag = DAG('test_dag',
-		default_args=default_args,
-		description='Hello World DAG',
-		schedule_interval='* * * * *',
-		catchup=False,
-		tags=['example, helloworld']
-)
 
-# python callable function
-def print_hello():
-		return 'Hello World!'
+def _training_model(model):
+    return randint(1, 10)
 
-# Creating first task
-start_task = DummyOperator(task_id='start_task', dag=hello_world_dag)
 
-# Creating second task
-hello_world_task = PythonOperator(task_id='hello_world_task', python_callable=print_hello, dag=hello_world_dag)
+with DAG("test",
+         start_date=datetime(2021, 1, 1),
+         schedule_interval='@daily',
+         catchup=False) as dag:
+    training_model_tasks = [
+        PythonOperator(
+            task_id=f"training_model_{model_id}",
+            python_callable=_training_model,
+            op_kwargs={
+                "model": model_id
+            }
+        ) for model_id in ['A', 'B', 'C']
+    ]
 
-# Creating third task
-end_task = DummyOperator(task_id='end_task', dag=hello_world_dag)
+    choosing_best_model = BranchPythonOperator(
+        task_id="choosing_best_model",
+        python_callable=_choosing_best_model
+    )
 
-# Set the order of execution of tasks.
-start_task >> hello_world_task >> end_task
+    accurate = BashOperator(
+        task_id="accurate",
+        bash_command="echo 'accurate'"
+    )
+
+    inaccurate = BashOperator(
+        task_id="inaccurate",
+        bash_command=" echo 'inaccurate'"
+    )
+
+    training_model_tasks >> choosing_best_model >> [accurate, inaccurate]
